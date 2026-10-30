@@ -60,6 +60,7 @@ import java.util.Set;
 
 import static org.opensearch.common.xcontent.XContentFactory.jsonBuilder;
 import static org.opensearch.index.query.QueryBuilders.queryStringQuery;
+import static org.opensearch.index.query.QueryBuilders.wildcardQuery;
 import static org.opensearch.search.SearchService.CLUSTER_CONCURRENT_SEGMENT_SEARCH_SETTING;
 import static org.opensearch.test.StreamsUtils.copyToStringFromClasspath;
 import static org.opensearch.test.hamcrest.OpenSearchAssertions.assertAcked;
@@ -444,6 +445,29 @@ public class QueryStringIT extends ParameterizedStaticSettingsOpenSearchIntegTes
         assertNoFailures(response);
         assertHitCount(response, 1);
         assertHits(response.getHits(), "3");
+    }
+
+    public void testWildcardField() throws Exception {
+        for (boolean docValues : new boolean[] { true, false }) {
+            String index = "wildcard-" + docValues;
+            assertAcked(prepareCreate(index).setMapping("my_field", "type=wildcard,doc_values=" + docValues));
+            ensureGreen(index);
+            indexRandom(true, client().prepareIndex(index).setId("sample-1").setSource("my_field", "apache_access_test.log"));
+
+            for (String pattern : new String[] { "*test*", "*t?st*" }) {
+                SearchResponse direct = client().prepareSearch(index).setQuery(wildcardQuery("my_field", pattern)).get();
+                assertNoFailures(direct);
+                assertHits(direct.getHits(), "sample-1");
+
+                SearchResponse queryString = client().prepareSearch(index).setQuery(queryStringQuery("my_field:" + pattern)).get();
+                assertNoFailures(queryString);
+                assertHits(queryString.getHits(), "sample-1");
+            }
+
+            SearchResponse caseSensitive = client().prepareSearch(index).setQuery(queryStringQuery("my_field:*TEST*")).get();
+            assertNoFailures(caseSensitive);
+            assertHitCount(caseSensitive, 0);
+        }
     }
 
     public void testFieldAliasWithWildcardField() throws Exception {

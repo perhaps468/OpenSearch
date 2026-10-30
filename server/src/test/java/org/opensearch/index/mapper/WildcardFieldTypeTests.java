@@ -34,6 +34,9 @@ import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.automaton.RegExp;
 import org.opensearch.common.lucene.Lucene;
+import org.opensearch.index.analysis.AnalyzerScope;
+import org.opensearch.index.analysis.LowercaseNormalizer;
+import org.opensearch.index.analysis.NamedAnalyzer;
 import org.opensearch.index.fielddata.IndexFieldData;
 import org.opensearch.index.query.QueryShardContext;
 import org.opensearch.search.lookup.SourceLookup;
@@ -125,6 +128,26 @@ public class WildcardFieldTypeTests extends FieldTypeTestCase {
             builder.add(new TermQuery(new Term("field", term)), BooleanClause.Occur.FILTER);
         }
         assertEquals(expectedQuery("field", builder.build(), "*apple*"), ft.wildcardQuery("*apple*", null, null));
+    }
+
+    public void testNormalizedWildcardQuery() {
+        QueryShardContext context = mock(QueryShardContext.class);
+        when(context.allowExpensiveQueries()).thenReturn(true);
+        when(context.sourcePath("field")).thenReturn(Set.of("field"));
+        try (NamedAnalyzer normalizer = new NamedAnalyzer("lowercase", AnalyzerScope.INDEX, new LowercaseNormalizer())) {
+            MappedFieldType ft = new WildcardFieldMapper.WildcardFieldType(
+                "field",
+                normalizer,
+                new WildcardFieldMapper.Builder("field").docValues(false)
+            );
+            Query query = ft.normalizedWildcardQuery("*TeSt?\\*", null, context);
+            assertThat(query, instanceOf(WildcardFieldMapper.WildcardMatchingQuery.class));
+            Predicate<String> matcher = ((WildcardFieldMapper.WildcardMatchingQuery) query).getSecondPhaseMatcher();
+            assertTrue(matcher.test("prefix_test1*"));
+            assertFalse(matcher.test("prefix_TEST1*"));
+            assertFalse(matcher.test("prefix_test12*"));
+            assertFalse(matcher.test("prefix_test1x"));
+        }
     }
 
     public void testEscapedWildcardQuery() {
